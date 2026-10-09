@@ -38,7 +38,7 @@ public class Firework : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        if (t < 12)
+        if (t < 15)
         {
             if(t>1 && explosion==false)
             {

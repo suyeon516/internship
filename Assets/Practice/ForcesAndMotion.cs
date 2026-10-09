@@ -7,7 +7,7 @@ public class Ball
     public GameObject obj;   
     public float radius;
     public Vector3 v;
-    public Vector3 f;
+    public Vector3 f;   //공이 받는 힘
     public float m;          
     public bool mousedrag = false;
 }
@@ -32,9 +32,9 @@ public class ForcesAndMotion : MonoBehaviour
 
     bool zeroGravity = false;
     const float g = 9.8f;    
-    const float ks = 100f;   // 스프링 계수
-    const float kd = 1f;     // 댐퍼 계수
-    const float  e = 0.9f;   // 탄성 계수
+    const float ks = 100f;   // 스프링 계수 -> 얼마나 세게 밀어내는가
+    const float kd = 1f;     // 댐퍼 계수 -> 브레이크를 얼마나 세게 거는가
+    const float  e = 0.9f;   // 탄성 계수 -> 벽에 부딪혔을 때 속도가 얼마나 남는가
 
     void OnGUI()
     {
@@ -87,13 +87,13 @@ public class ForcesAndMotion : MonoBehaviour
 
             // 중력
             bi.f = zeroGravity ? Vector3.zero : bi.m * new Vector3(0, -g, 0);
-
+            // 다른 공과 충돌했는지
             for (int j = 0; j < balls.Count; j++)
             {
                 if (i == j) continue;
                 Ball bj = balls[j];
 
-                Vector3 rij = bi.obj.transform.position - bj.obj.transform.position;
+                Vector3 rij = bi.obj.transform.position - bj.obj.transform.position;    //나 - 상대 : 상대에서 나를 향하는 화살표
                 Vector3 vij = bi.v - bj.v;
                 float sumRadius = bi.radius + bj.radius;
 
@@ -106,9 +106,9 @@ public class ForcesAndMotion : MonoBehaviour
             }
         }
         for (int i = 0; i < balls.Count; i++)
-        {
+        {   //벽과 부딪힘
             Ball b = balls[i];
-            float sideB = side - thk * 0.5f - b.radius;
+            float sideB = side - thk * 0.5f - b.radius; //공 중심이 갈 수 있는 한계선
 
             Vector3 pos = b.obj.transform.position;
 
