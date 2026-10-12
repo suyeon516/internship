@@ -20,18 +20,22 @@ public class Lotto : MonoBehaviour
     GameObject bucket;
     const float radius = 10.0f;             // 통 반지름
 
-    // 물리 상수
-    const float g = 9.8f;
-    const float ks = 100f;                  // 스프링 계수
-    const float kd = 3f;                    // 댐퍼 계수 (1 -> 3으로 올림)
-    const float e = 0.7f;                   // 탄성 계수 (0.9 -> 0.7로 낮춤)
+    // 출구 
+    const float exitR = 2.5f;               // 출구 구멍 반지름
+    bool exitOpen = false;                  // 추첨 중에만 열림
+
+    const float g = 9.8f;                     // 중력 
+    const float airDrag = 0.5f;             // 공기 저항
+    const float ks = 100f;                  // 스프링 계수(얼마나 세게 밀어내는ㄴ지)
+    const float kd = 3f;                    // 댐퍼 계수 (브레이크를 얼마나 세게 거는지)
+    const float e = 0.7f;                   // 탄성 계수 (벽에 튕길 때 남는 속도 비율)
     float dt = 0.02f;
 
-    // 바람
-    const float windMax = 20f;              // 최대 바람 세기
-    const float windMin = 8f;               // 출렁일 때 최소 세기 (중력 9.8보다 약함)
-    const float rampTime = 4f;              // 최대 세기까지 걸리는 시간(초)
-    bool blowing = false;
+    // 바람 
+    const float windMax = 115f;
+    const float windMin = 2.5f;
+    const float rampTime = 4f;  // 바람이 최대까지 세지는 시간
+    bool blowing = false;   // 지금 바람이 불고 있나
     float windTimer = 0f;
 
     // 공
@@ -39,11 +43,7 @@ public class Lotto : MonoBehaviour
     List<LottoBall> all = new List<LottoBall>();      // 전체 공 (글자 위치 갱신용)
     List<int> pickedNumbers = new List<int>();        // 뽑힌 번호
 
-    // 추첨
     const int pickCount = 6;
-    const float pickInterval = 4f;          // 몇 초마다 한 개 뽑을지
-    float pickTimer = 0f;
-
     bool zeroGravity = false;
 
     void OnGUI()
@@ -52,15 +52,13 @@ public class Lotto : MonoBehaviour
 
         if (GUI.Button(new Rect(10, 40, 100, 30), "추첨 시작"))
         {
-            if (!blowing && pickedNumbers.Count < pickCount)
+            if (!blowing && pickedNumbers.Count < pickCount)    // 추첨 중이 아니고 아직 6개를 안뽑았을 때
             {
                 blowing = true;
-                pickTimer = 0f;
-                windTimer = 0f;             // 매번 약한 바람부터 시작
+                windTimer = 0f;
             }
         }
 
-        // 뽑힌 번호 표시 (작은 순으로 정렬해서)
         List<int> sorted = new List<int>(pickedNumbers);
         sorted.Sort();
         GUI.Label(new Rect(10, 80, 400, 25), "뽑힌 번호: " + string.Join(", ", sorted));
@@ -71,7 +69,7 @@ public class Lotto : MonoBehaviour
         Camera.main.transform.position = new Vector3(0, 0, 35);
         Camera.main.transform.LookAt(Vector3.zero);
 
-        makeBucket();
+        makeBucket();   // 통 만들기
 
         for (int i = 0; i < 45; i++)
         {
@@ -85,18 +83,15 @@ public class Lotto : MonoBehaviour
             b.obj.GetComponent<Renderer>().material.color =
                 new Color(Random.value, Random.value, Random.value);
 
-            // 통 안 아무 곳에서 시작 (z 고정 없음)
-            b.obj.transform.position = Random.insideUnitSphere * (radius - 1.5f);
-
-            // 속도: 모든 방향 랜덤 (5 -> 2로 낮춤)
+            b.obj.transform.position = Random.insideUnitSphere * (radius - 1.5f);   //반지름 8.5짜리 구 안의 랜덤 위치
             b.v = 2f * RandomVec();
 
-            // 번호 글자 (LateUpdate에서 위치를 맞춤)
+            // 번호 글자 붙이기
             b.label = new GameObject("Label" + b.number);
             TextMesh tm = b.label.AddComponent<TextMesh>();
             tm.text = b.number.ToString();
             tm.fontSize = 100;
-            tm.characterSize = 0.1f;        // 글자 크기: 안 맞으면 이 값 조절
+            tm.characterSize = 0.1f;
             tm.anchor = TextAnchor.MiddleCenter;
             tm.alignment = TextAlignment.Center;
             tm.color = Color.black;
@@ -108,31 +103,36 @@ public class Lotto : MonoBehaviour
 
     void Update()
     {
-        // 0. 바람 세기 계산: 서서히 세지다가(ramp) 출렁임(wave)
+        // 출구는 추첨 중이고 아직 6개 안 뽑았을 때 열림
+        exitOpen = blowing && pickedNumbers.Count < pickCount;
+
+        // 바람 세기: 서서히 세지다가(ramp) 출렁임(wave)
         float wind = 0f;
         if (blowing)
         {
             windTimer += dt;
-            float ramp = Mathf.Clamp01(windTimer / rampTime);               // 0 -> 1
-            float wave = (Mathf.Sin(windTimer * 2f) + 1f) * 0.5f;           // 0 ~ 1 출렁
-            wind = ramp * Mathf.Lerp(windMin, windMax, wave);
+            float ramp = Mathf.Clamp01(windTimer / rampTime);   //시간이 지날수록 0~1로 감 4초 뒤엔 1에서 멈춤
+            float wave = (Mathf.Cos(windTimer * 2f) + 1f) * 0.5f;   //cos파 0~1 값
+            wind = ramp * Mathf.Lerp(windMin, windMax, wave);   // 둘을 곱해서 서서히 세지고 출렁이는 바람ㅁ을 만듦
         }
 
-        // 1. 힘 계산
+        // 힘 계산
         for (int i = 0; i < balls.Count; i++)
         {
             LottoBall bi = balls[i];
 
-            // 중력
             bi.f = zeroGravity ? Vector3.zero : bi.m * new Vector3(0, -g, 0);
 
-            // 바람: 통 아래쪽에서만 위로 불어서 공을 솟구치게 함
+            // 공기 저항 (중력이 켜져 있을 때만)
+            if (!zeroGravity) bi.f -= airDrag * bi.v;
+
+            // 바람: 통 아래쪽에 있을 때만 위로 wind만큼 밀기 x,z,에는 랜덤하게 살짝만 힘 줌
             if (blowing && bi.obj.transform.position.y < -radius * 0.3f)
             {
-                bi.f += new Vector3(Random.Range(-5f, 5f), wind, Random.Range(-5f, 5f));
+                bi.f += new Vector3(Random.Range(-2f, 2f), wind, Random.Range(-2f, 2f));
             }
 
-            // 공끼리 충돌 (스프링 + 댐퍼)
+            // 공끼리 충돌
             for (int j = 0; j < balls.Count; j++)
             {
                 if (i == j) continue;
@@ -151,47 +151,56 @@ public class Lotto : MonoBehaviour
             }
         }
 
-        // 2. 속도, 위치 갱신
+        // 속도, 위치 갱신
         for (int i = 0; i < balls.Count; i++)
         {
             balls[i].v += balls[i].f / balls[i].m * dt;
             balls[i].obj.transform.position += balls[i].v * dt;
         }
 
-        // 3. 통 벽 충돌 (이동 다음에 검사)
+        //  통 벽 충돌 (출구 구멍 근처는 열려 있으면 통과)
         for (int i = 0; i < balls.Count; i++)
         {
             LottoBall b = balls[i];
-            float limit = radius - b.radius;
+            float limit = radius - b.radius;    // 공 중심이 갈 수 있는 한계
             Vector3 pos = b.obj.transform.position;
 
             if (pos.magnitude > limit)
             {
-                Vector3 n = pos.normalized;              // 벽의 법선 (원점 -> 공)
-                b.obj.transform.position = n * limit;    // 한계선 안으로 되돌림
+                float horizontal = new Vector2(pos.x, pos.z).magnitude;   // 위에서 봤을 때 중심으로부터 거리
+                bool inExit = exitOpen && pos.y > 0 && horizontal < exitR;
+                if (inExit) continue;                                      // 출구면 벽 충돌 건너뜀
+
+                Vector3 n = pos.normalized;
+                b.obj.transform.position = n * limit;
 
                 float vn = Vector3.Dot(b.v, n);
-                if (vn > 0)                              // 벽 쪽으로 나가는 중일 때만 반사
+                if (vn > 0) // 이미 벽에서 멀어지는 중이면 다시 반사하지 않는다는....
                     b.v -= (1 + e) * vn * n;
             }
         }
 
-        // 4. 추첨: 바람이 켜진 동안 일정 간격마다 가장 위에 있는 공 하나 뽑기
-        if (blowing)
+        //  추첨: 출구로 빠져나가 통 밖으로 완전히 나온 공
+        if (exitOpen)
         {
-            pickTimer += dt;
-            if (pickTimer >= pickInterval)
+            for (int i = balls.Count - 1; i >= 0; i--)
             {
-                pickTimer = 0f;
-                pickTopBall();
+                if (pickedNumbers.Count >= pickCount) break;
 
-                if (pickedNumbers.Count >= pickCount)
-                    blowing = false;                     // 6개 다 뽑으면 바람 끔
+                LottoBall b = balls[i];
+                Vector3 pos = b.obj.transform.position;
+                if (pos.y > 0 && pos.magnitude > radius + b.radius) // 공 전체가 통 밖으로 나갔는지
+                {
+                    pickBall(b);
+                }
             }
+
+            if (pickedNumbers.Count >= pickCount)
+                blowing = false;                                           // 6개 다 뽑으면 바람 끔
         }
     }
 
-    // 번호 글자를 항상 카메라 쪽을 보게, 공 표면 앞에 붙임
+    // 번호 글자를 카메라 쪽 공 표면 앞에 붙임
     void LateUpdate()
     {
         Camera cam = Camera.main;
@@ -203,25 +212,15 @@ public class Lotto : MonoBehaviour
         }
     }
 
-    void pickTopBall()
+    void pickBall(LottoBall b)
     {
-        if (balls.Count == 0) return;
-
-        // y가 가장 큰 공 찾기
-        LottoBall top = balls[0];
-        foreach (LottoBall b in balls)
-        {
-            if (b.obj.transform.position.y > top.obj.transform.position.y)
-                top = b;
-        }
-
-        // 물리 계산 대상에서 제외하고 통 아래쪽 일렬 위치에 배치
-        balls.Remove(top);
-        top.v = Vector3.zero;
+        balls.Remove(b);                    // 물리 계산 대상에서 제외
+        b.v = Vector3.zero;
 
         int idx = pickedNumbers.Count;
-        top.obj.transform.position = new Vector3(-12.5f + idx * 5f, -14f, 0);
-        pickedNumbers.Add(top.number);
+        // 통 아래쪽에 세우기
+        b.obj.transform.position = new Vector3(-12.5f + idx * 5f, -14f, 0);
+        pickedNumbers.Add(b.number);
     }
 
     void makeBucket()
@@ -233,7 +232,13 @@ public class Lotto : MonoBehaviour
         if (glassMat != null)
             bucket.GetComponent<Renderer>().material = glassMat;
 
-        Destroy(bucket.GetComponent<Collider>());   // 통 콜라이더 제거 (충돌은 코드로 처리)
+        Destroy(bucket.GetComponent<Collider>());
+
+        // 출구 관 (눈으로 출구 위치를 보여주는 용도...)
+        GameObject pipe = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        pipe.transform.position = new Vector3(0, radius + 1f, 0);
+        pipe.transform.localScale = new Vector3(exitR * 2f, 1f, exitR * 2f);
+        Destroy(pipe.GetComponent<Collider>());
     }
 
     Vector3 RandomVec()
