@@ -1,202 +1,246 @@
 using UnityEngine;
-using UnityEngine.InputSystem;
 using System.Collections.Generic;
 
 public class LottoBall
 {
     public GameObject obj;
+    public GameObject label;   // 번호 글자
+    public int number;
     public float radius;
     public Vector3 v;
-    public Vector3 f;   //공이 받는 힘
+    public Vector3 f;
     public float m;
-    public bool mousedrag = false;
 }
 
-
-public class Lotto: MonoBehaviour
+public class Lotto : MonoBehaviour
 {
+    public Material glassMat;               // Inspector에서 투명 머티리얼 연결
+
     // 통
     GameObject bucket;
+    const float radius = 10.0f;             // 통 반지름
 
-    //Start ,Update 외 함수에서 쓰려면 const 선언
-    const float radius= 10.0f;   //반지름
-    const float side = 10.0f;
-    const float thk = 0.3f;     //두께
-    const float s2 = 2 * radius - thk;
-    const float s3 = 2 * radius + thk;
+    // 물리 상수
+    const float g = 9.8f;
+    const float ks = 100f;                  // 스프링 계수
+    const float kd = 3f;                    // 댐퍼 계수 (1 -> 3으로 올림)
+    const float e = 0.7f;                   // 탄성 계수 (0.9 -> 0.7로 낮춤)
+    float dt = 0.02f;
 
-    public Material glassMat;
+    // 바람
+    const float windMax = 20f;              // 최대 바람 세기
+    const float windMin = 8f;               // 출렁일 때 최소 세기 (중력 9.8보다 약함)
+    const float rampTime = 4f;              // 최대 세기까지 걸리는 시간(초)
+    bool blowing = false;
+    float windTimer = 0f;
+
     // 공
-    List<LottoBall> balls = new List<LottoBall>();
+    List<LottoBall> balls = new List<LottoBall>();    // 통 안에서 움직이는 공
+    List<LottoBall> all = new List<LottoBall>();      // 전체 공 (글자 위치 갱신용)
+    List<int> pickedNumbers = new List<int>();        // 뽑힌 번호
 
-    bool drag = false;
-    LottoBall chosen = null;
-
+    // 추첨
+    const int pickCount = 6;
+    const float pickInterval = 4f;          // 몇 초마다 한 개 뽑을지
+    float pickTimer = 0f;
 
     bool zeroGravity = false;
-    const float g = 9.8f;
-    const float ks = 100f;   // 스프링 계수 -> 얼마나 세게 밀어내는가
-    const float kd = 1f;     // 댐퍼 계수 -> 브레이크를 얼마나 세게 거는가
-    const float e = 0.9f;   // 탄성 계수 -> 벽에 부딪혔을 때 속도가 얼마나 남는가
 
     void OnGUI()
     {
         zeroGravity = GUI.Toggle(new Rect(10, 10, 150, 25), zeroGravity, "zero-gravity");
-    }
 
-    float t = 0f;
-    float dt = 0.01f;
+        if (GUI.Button(new Rect(10, 40, 100, 30), "추첨 시작"))
+        {
+            if (!blowing && pickedNumbers.Count < pickCount)
+            {
+                blowing = true;
+                pickTimer = 0f;
+                windTimer = 0f;             // 매번 약한 바람부터 시작
+            }
+        }
+
+        // 뽑힌 번호 표시 (작은 순으로 정렬해서)
+        List<int> sorted = new List<int>(pickedNumbers);
+        sorted.Sort();
+        GUI.Label(new Rect(10, 80, 400, 25), "뽑힌 번호: " + string.Join(", ", sorted));
+    }
 
     void Start()
     {
-        Camera.main.transform.position = new Vector3(0, 0, 30);
+        Camera.main.transform.position = new Vector3(0, 0, 35);
         Camera.main.transform.LookAt(Vector3.zero);
+
         makeBucket();
+
         for (int i = 0; i < 45; i++)
         {
             LottoBall b = new LottoBall();
+            b.number = i + 1;
             b.radius = 1.0f;
-            b.obj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            b.obj.transform.localScale = Vector3.one * b.radius * 2f;
-            b.obj.GetComponent<Renderer>().material.color = new Color(Random.value, Random.value, Random.value);
-
-            // pos
-            Vector3 pos = 0.8f * radius * RandomVec();
-            pos.z = side - 2;
-            b.obj.transform.position = pos;
-
-            // v 
-            b.v = radius * RandomVec();
-            b.v.z = 0;
-
             b.m = b.radius * b.radius * b.radius;
 
-            balls.Add(b);
-        }
+            b.obj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            b.obj.transform.localScale = Vector3.one * b.radius * 2f;
+            b.obj.GetComponent<Renderer>().material.color =
+                new Color(Random.value, Random.value, Random.value);
 
+            // 통 안 아무 곳에서 시작 (z 고정 없음)
+            b.obj.transform.position = Random.insideUnitSphere * (radius - 1.5f);
+
+            // 속도: 모든 방향 랜덤 (5 -> 2로 낮춤)
+            b.v = 2f * RandomVec();
+
+            // 번호 글자 (LateUpdate에서 위치를 맞춤)
+            b.label = new GameObject("Label" + b.number);
+            TextMesh tm = b.label.AddComponent<TextMesh>();
+            tm.text = b.number.ToString();
+            tm.fontSize = 100;
+            tm.characterSize = 0.1f;        // 글자 크기: 안 맞으면 이 값 조절
+            tm.anchor = TextAnchor.MiddleCenter;
+            tm.alignment = TextAlignment.Center;
+            tm.color = Color.black;
+
+            balls.Add(b);
+            all.Add(b);
+        }
     }
 
     void Update()
     {
-        Mouse mouse = Mouse.current;
-        if (mouse == null) return;
-        if (mouse.leftButton.wasPressedThisFrame) down();
-        if (mouse.leftButton.isPressed) move();
-        if (mouse.leftButton.wasReleasedThisFrame) up();
+        // 0. 바람 세기 계산: 서서히 세지다가(ramp) 출렁임(wave)
+        float wind = 0f;
+        if (blowing)
+        {
+            windTimer += dt;
+            float ramp = Mathf.Clamp01(windTimer / rampTime);               // 0 -> 1
+            float wave = (Mathf.Sin(windTimer * 2f) + 1f) * 0.5f;           // 0 ~ 1 출렁
+            wind = ramp * Mathf.Lerp(windMin, windMax, wave);
+        }
 
+        // 1. 힘 계산
         for (int i = 0; i < balls.Count; i++)
         {
             LottoBall bi = balls[i];
 
             // 중력
             bi.f = zeroGravity ? Vector3.zero : bi.m * new Vector3(0, -g, 0);
-            // 다른 공과 충돌했는지
+
+            // 바람: 통 아래쪽에서만 위로 불어서 공을 솟구치게 함
+            if (blowing && bi.obj.transform.position.y < -radius * 0.3f)
+            {
+                bi.f += new Vector3(Random.Range(-5f, 5f), wind, Random.Range(-5f, 5f));
+            }
+
+            // 공끼리 충돌 (스프링 + 댐퍼)
             for (int j = 0; j < balls.Count; j++)
             {
                 if (i == j) continue;
                 LottoBall bj = balls[j];
 
-                Vector3 rij = bi.obj.transform.position - bj.obj.transform.position;    //나 - 상대 : 상대에서 나를 향하는 화살표
+                Vector3 rij = bi.obj.transform.position - bj.obj.transform.position;
                 Vector3 vij = bi.v - bj.v;
                 float sumRadius = bi.radius + bj.radius;
 
                 if (sumRadius > rij.magnitude)
                 {
-                    Vector3 n = rij.normalized;                      // norm(r_ij)
-                    bi.f -= ks * (rij.magnitude - sumRadius) * n;    // 스프링
-                    bi.f -= kd * Vector3.Dot(vij, n) * n;            // 감쇠
+                    Vector3 n = rij.normalized;
+                    bi.f -= ks * (rij.magnitude - sumRadius) * n;
+                    bi.f -= kd * Vector3.Dot(vij, n) * n;
                 }
             }
         }
-        for (int i = 0; i < balls.Count; i++)
-        {   //벽과 부딪힘
-            LottoBall b = balls[i];
-            float limit = radius-b.radius;
 
+        // 2. 속도, 위치 갱신
+        for (int i = 0; i < balls.Count; i++)
+        {
+            balls[i].v += balls[i].f / balls[i].m * dt;
+            balls[i].obj.transform.position += balls[i].v * dt;
+        }
+
+        // 3. 통 벽 충돌 (이동 다음에 검사)
+        for (int i = 0; i < balls.Count; i++)
+        {
+            LottoBall b = balls[i];
+            float limit = radius - b.radius;
             Vector3 pos = b.obj.transform.position;
+
             if (pos.magnitude > limit)
             {
-                Vector3 n = pos.normalized;                  // 원점 → 공 방향 (벽의 법선)
-                b.obj.transform.position = n * limit;        // 위치를 한계선 안으로 되돌림
+                Vector3 n = pos.normalized;              // 벽의 법선 (원점 -> 공)
+                b.obj.transform.position = n * limit;    // 한계선 안으로 되돌림
 
-                float vn = Vector3.Dot(b.v, n);              // 속도 중 벽 방향 성분
-                if (vn > 0)                                  // 벽 쪽으로 나가는 중일 때만 반사
+                float vn = Vector3.Dot(b.v, n);
+                if (vn > 0)                              // 벽 쪽으로 나가는 중일 때만 반사
                     b.v -= (1 + e) * vn * n;
             }
         }
 
-        for (int i = 0; i < balls.Count; i++)
+        // 4. 추첨: 바람이 켜진 동안 일정 간격마다 가장 위에 있는 공 하나 뽑기
+        if (blowing)
         {
-            if (balls[i].mousedrag == false)
+            pickTimer += dt;
+            if (pickTimer >= pickInterval)
             {
-                balls[i].v += balls[i].f / balls[i].m * dt;
-                balls[i].obj.transform.position += balls[i].v * dt;
-            }
+                pickTimer = 0f;
+                pickTopBall();
 
+                if (pickedNumbers.Count >= pickCount)
+                    blowing = false;                     // 6개 다 뽑으면 바람 끔
+            }
         }
-        t += dt;
+    }
+
+    // 번호 글자를 항상 카메라 쪽을 보게, 공 표면 앞에 붙임
+    void LateUpdate()
+    {
+        Camera cam = Camera.main;
+        foreach (LottoBall b in all)
+        {
+            Vector3 toCam = (cam.transform.position - b.obj.transform.position).normalized;
+            b.label.transform.position = b.obj.transform.position + toCam * (b.radius + 0.05f);
+            b.label.transform.rotation = cam.transform.rotation;
+        }
+    }
+
+    void pickTopBall()
+    {
+        if (balls.Count == 0) return;
+
+        // y가 가장 큰 공 찾기
+        LottoBall top = balls[0];
+        foreach (LottoBall b in balls)
+        {
+            if (b.obj.transform.position.y > top.obj.transform.position.y)
+                top = b;
+        }
+
+        // 물리 계산 대상에서 제외하고 통 아래쪽 일렬 위치에 배치
+        balls.Remove(top);
+        top.v = Vector3.zero;
+
+        int idx = pickedNumbers.Count;
+        top.obj.transform.position = new Vector3(-12.5f + idx * 5f, -14f, 0);
+        pickedNumbers.Add(top.number);
     }
 
     void makeBucket()
     {
-       
-        bucket = GameObject.CreatePrimitive(PrimitiveType.Sphere); 
+        bucket = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         bucket.transform.localScale = Vector3.one * radius * 2f;
-        bucket.GetComponent<Renderer>().material = glassMat;
+        bucket.transform.position = Vector3.zero;
 
-        // pos
-        Vector3 pos = Vector3.zero;
-        bucket.transform.position = pos;
+        if (glassMat != null)
+            bucket.GetComponent<Renderer>().material = glassMat;
+
+        Destroy(bucket.GetComponent<Collider>());   // 통 콜라이더 제거 (충돌은 코드로 처리)
     }
 
-    Vector3 RandomVec() //랜덤 백터 만들기
+    Vector3 RandomVec()
     {
         return new Vector3(
             Random.Range(-1f, 1f),
             Random.Range(-1f, 1f),
             Random.Range(-1f, 1f));
-    }
-
-    // 조작함수
-    void down()
-    {
-        Ray ray = Camera.main.ScreenPointToRay(Mouse.current.position.ReadValue());
-        if (Physics.Raycast(ray, out RaycastHit hit))
-        {
-            foreach (LottoBall b in balls)
-            {
-                if (b.obj == hit.collider.gameObject)
-                {
-                    chosen = b;
-                    drag = true;
-                    break;
-                }
-            }
-        }
-    }
-    void move()
-    {
-        if (!drag || chosen == null) return;
-
-        // 마우스 광선이 z = side-2 평면과 만나는 점 = scene.mouse.pos 대체
-        Plane plane = new Plane(Vector3.forward, new Vector3(0, 0, side - 2));
-        Ray ray = Camera.main.ScreenPointToRay(Mouse.current.position.ReadValue());
-
-        if (plane.Raycast(ray, out float enter))
-        {
-            Vector3 p = ray.GetPoint(enter);
-
-            if (-side < p.x && p.x < side && -side < p.y && p.y < side)
-            {
-                chosen.obj.transform.position = new Vector3(p.x, p.y, side - 2);
-                chosen.mousedrag = true;
-            }
-        }
-    }
-    void up()
-    {
-        drag = false;
-        if (chosen != null) chosen.mousedrag = false;
-        chosen = null;
     }
 }
